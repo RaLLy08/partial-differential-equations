@@ -18,16 +18,17 @@ N = state.N
 WINDOW_SIZE = state.WINDOW_SIZE
 STEPS_PER_FRAME = state.STEPS_PER_FRAME
 C = state.C
+C_sq = C ** 2  # pre-compute once
 
 if not state.is_stable:
     print(f"Warning: CFL condition violated. The simulation may be unstable. C={C:.4f}")
 
 dim = (N, N)
-u_gpu = torch.from_numpy(
-    state.initial_u.astype(np.float32)
-).to(device)
 
-u_gpu_prev = torch.zeros(dim, device=device)
+# Three pre-allocated GPU buffers — no dynamic allocation in the hot loop
+u_prev = torch.zeros(dim, device=device)
+u_curr = torch.from_numpy(state.initial_u.astype(np.float32)).to(device)
+u_next = torch.zeros(dim, device=device)
 
 kernel_gpu = torch.tensor([
     [0, 1, 0],
@@ -38,36 +39,48 @@ kernel_gpu = torch.tensor([
 ).view(1, 1, 3, 3)
 
 
+@torch.no_grad()
 def propagate_steps(steps):
-    global u_gpu, u_gpu_prev
+    global u_prev, u_curr, u_next
 
     for _ in range(steps):
         laplacian = nn.functional.conv2d(
-            u_gpu.unsqueeze(0).unsqueeze(0),
+            u_curr.unsqueeze(0).unsqueeze(0),
             kernel_gpu,
             padding=1
-        ).squeeze()
+        ).squeeze_()
 
-        u_gpu_next = 2 * u_gpu - u_gpu_prev + C**2 * laplacian
+        # Write result into the pre-allocated u_next buffer (no allocation)
+        torch.add(u_curr, u_curr, out=u_next)   # u_next = 2 * u_curr
+        u_next.sub_(u_prev)                      # u_next -= u_prev
+        u_next.add_(laplacian, alpha=C_sq)       # u_next += C² * laplacian
 
-        u_gpu_prev = u_gpu.clone()
-        u_gpu = u_gpu_next.clone()
+        # Rotate buffers — zero allocations, zero copies
+        u_prev, u_curr, u_next = u_curr, u_next, u_prev
 
 
-def amplitude_to_color(amp_array):
-    # Map [-MAX, +MAX] -> [0, 1], blue=negative, black=zero, red=positive
-    normalized = np.clip(amp_array / MAX_WAVE_AMPLITUDE, -1, 1)
+@torch.no_grad()
+def amplitude_to_color(u_tensor):
+    # Compute color mapping on GPU; transfer uint8 (3x smaller than float32)
+    normalized = torch.clamp(u_tensor * (1.0 / MAX_WAVE_AMPLITUDE), -1.0, 1.0)
 
-    r = np.clip(normalized, 0, 1)
-    g = np.zeros_like(normalized)
-    b = np.clip(-normalized, 0, 1)
+    pos = torch.clamp(normalized, 0.0, 1.0)   # crests  0→1
+    neg = torch.clamp(-normalized, 0.0, 1.0)  # troughs 0→1
 
-    rgb = np.stack([r * 255, g * 255, b * 255], axis=-1).astype(np.uint8)
-    return rgb
+    # Gamma curve — lifts small-amplitude waves so they stay visible
+    pos = torch.pow(pos, 0.6)
+    neg = torch.pow(neg, 0.6)
+
+    r = torch.clamp(pos, 0.0, 1.0)
+    b = torch.clamp(neg, 0.0, 1.0)
+    g = torch.zeros_like(pos)
+
+    rgb = torch.stack([r, g, b], dim=-1).mul_(255).to(torch.uint8)
+    return rgb.cpu().numpy()
 
 
 def add_pulse(x, y):
-    global u_gpu, u_gpu_prev
+    global u_curr
 
     gx = int(x * N / WINDOW_SIZE)
     gy = int(y * N / WINDOW_SIZE)
@@ -80,10 +93,10 @@ def add_pulse(x, y):
 
     pulse_shape = (y_max - y_min, x_max - x_min)
     pulse = torch.from_numpy(
-        get_gaussian_pulse(pulse_shape, MAX_WAVE_AMPLITUDE).astype(np.float32)
+        get_gaussian_pulse(pulse_shape, 0.1, 4).astype(np.float32)
     ).to(device)
 
-    u_gpu[y_min:y_max, x_min:x_max] += pulse
+    u_curr[y_min:y_max, x_min:x_max].add_(pulse)
 
 
 def main():
@@ -111,18 +124,18 @@ def main():
 
         propagate_steps(STEPS_PER_FRAME)
 
-        u_cpu = u_gpu.detach().cpu().numpy()
-        rgb = amplitude_to_color(u_cpu)
+        rgb = amplitude_to_color(u_curr)
 
         surf = pygame.surfarray.make_surface(rgb.swapaxes(0, 1))
-        surf = pygame.transform.scale(surf, (WINDOW_SIZE, WINDOW_SIZE))
+        if N != WINDOW_SIZE:
+            surf = pygame.transform.scale(surf, (WINDOW_SIZE, WINDOW_SIZE))
         screen.blit(surf, (0, 0))
 
-        fps_text = font.render(
-            f"FPS: {clock.get_fps():.0f} C={C:.2f}  N={N}",
-            True, (255, 255, 255)
-        )
-        screen.blit(fps_text, (10, 10))
+        # fps_text = font.render(
+        #     f"FPS: {clock.get_fps():.0f} C={C:.2f}  N={N}",
+        #     True, (255, 255, 255)
+        # )
+        # screen.blit(fps_text, (10, 10))
 
         pygame.display.flip()
         clock.tick(60)

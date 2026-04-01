@@ -36,8 +36,8 @@ class InitialStates1D(WaveStateBase):
     def initial_u(self):
         """Generate initial wave state with multiple Gaussian pulses."""
         u = np.zeros(self.N)
-        u += get_gaussian_pulse(self.N, self.MAX_AMPLITUDE / 2, 2.5, center=self.N // 4)  
-        u += get_gaussian_pulse(self.N, self.MAX_AMPLITUDE / 2, 2.5, center=3 * self.N // 4)
+        # u += get_gaussian_pulse(self.N, self.MAX_AMPLITUDE / 2, 2.5, center=self.N // 4)  
+        # u += get_gaussian_pulse(self.N, self.MAX_AMPLITUDE / 2, 2.5, center=3 * self.N // 4)
         u += get_gaussian_pulse(self.N, self.MAX_AMPLITUDE)
         return u
 
@@ -46,10 +46,11 @@ class InitialStates1D(WaveStateBase):
 
 @dataclass(frozen=True)
 class InitialStates2D(WaveStateBase):
-    N: int = 400
-    c: float = 20.0
-    WINDOW_SIZE: int = 800
-    STEPS_PER_FRAME: int = 25
+    N: int = 500
+    c: float = 8.0
+    WINDOW_SIZE: int = 500
+    STEPS_PER_FRAME: int = 20
+    MAX_AMPLITUDE: float = 1
 
     @property
     def is_stable(self) -> bool:
@@ -61,9 +62,9 @@ class InitialStates2D(WaveStateBase):
         """Generate initial wave state with multiple Gaussian pulses."""
         dim = (self.N, self.N)
         u = np.zeros(dim)
-        u += get_gaussian_pulse(dim, self.MAX_AMPLITUDE / 2, 10, center=[self.N // 4, self.N // 4])
-        u += get_gaussian_pulse(dim, self.MAX_AMPLITUDE / 2, 10, center=[3 * self.N // 4, 3 * self.N // 4])
-        u += get_gaussian_pulse(dim, self.MAX_AMPLITUDE)
-        u += get_gaussian_pulse(dim, self.MAX_AMPLITUDE / 2, 10, center=[self.N // 4, 3 * self.N // 4])
-        u += get_gaussian_pulse(dim, self.MAX_AMPLITUDE / 2, 10, center=[3 * self.N // 4, self.N // 4])
+        # u += get_gaussian_pulse(dim, self.MAX_AMPLITUDE / 2, 10, center=[self.N // 4, self.N // 4])
+        # u += get_gaussian_pulse(dim, self.MAX_AMPLITUDE / 2, 10, center=[3 * self.N // 4, 3 * self.N // 4])
+        # u += get_gaussian_pulse(dim, self.MAX_AMPLITUDE)
+        # u += get_gaussian_pulse(dim, self.MAX_AMPLITUDE / 2, 10, center=[self.N // 4, 3 * self.N // 4])
+        # u += get_gaussian_pulse(dim, self.MAX_AMPLITUDE / 2, 10, center=[3 * self.N // 4, self.N // 4])
         return u
